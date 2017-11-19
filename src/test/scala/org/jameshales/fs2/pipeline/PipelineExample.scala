@@ -2,8 +2,6 @@ package org.jameshales.fs2.pipeline
 
 import cats.effect.IO
 import fs2.{ Scheduler, Sink, Stream }
-import fs2.interop.cats.effect._
-import fs2.time
 
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration._
@@ -11,12 +9,10 @@ import scala.math.abs
 import scala.util.Random
 
 object PipelineExample extends App {
-  implicit val scheduler = Scheduler.fromFixedDaemonPool(3)
-
   final case class Event(key: Int, value: String)
 
   val fruits =
-    Stream.emits[IO, Event](Seq(
+    Stream.emits[Event](Seq(
       Event(0, "Apple"),
       Event(0, "Banana"),
       Event(0, "Cherry"),
@@ -30,7 +26,7 @@ object PipelineExample extends App {
     ))
 
   val animals =
-    Stream.emits[IO, Event](Seq(
+    Stream.emits[Event](Seq(
       Event(1, "Ant"),
       Event(1, "Bee"),
       Event(1, "Cat"),
@@ -44,7 +40,7 @@ object PipelineExample extends App {
     ))
 
   val sports =
-    Stream.emits[IO, Event](Seq(
+    Stream.emits[Event](Seq(
       Event(2, "Archery"),
       Event(2, "Bowling"),
       Event(2, "Cycling"),
@@ -58,7 +54,7 @@ object PipelineExample extends App {
     ))
 
   val languages =
-    Stream.emits[IO, Event](Seq(
+    Stream.emits[Event](Seq(
       Event(3, "Ada"),
       Event(3, "Brainfuck"),
       Event(3, "C"),
@@ -72,47 +68,59 @@ object PipelineExample extends App {
     ))
 
   def slowWrite(message: String): Stream[IO, Unit] =
-    Stream.eval(IO(abs(Random.nextGaussian()) * 3))
-      .flatMap(n => time.sleep(n.seconds))
-      .evalMap(_ => IO(println(message)))
+    Stream.eval(IO(println(message)))
+    /*
+     *Stream.eval(IO(abs(Random.nextGaussian() * 0.1)))
+     *  .flatMap(n => s.sleep[IO](0.1.seconds))
+     *  .evalMap(_ => IO(println(message)))
+     */
 
-  val writeToDatabase: Sink[IO, Event] =
+  def writeToDatabase: Sink[IO, Event] =
     (_: Stream[IO, Event]).flatMap(event =>
       slowWrite(s"Wrote ${event.value} to the database.")
     )
   
-  val writeToIndex: Sink[IO, Event] =
+  def writeToIndex: Sink[IO, Event] =
     (_: Stream[IO, Event]).flatMap(event =>
       slowWrite(s"Wrote ${event.value} to the search index.")
     )
   
-  val writeToWorkQueue: Sink[IO, Event] =
+  def writeToWorkQueue: Sink[IO, Event] =
     (_: Stream[IO, Event]).flatMap(event =>
       slowWrite(s"Wrote ${event.value} to the work queue.")
     )
 
   // Pass a Stream through multiple Sinks sequentially
-  fruits
-    .through(writeToDatabase.passthrough)
-    .through(writeToIndex.passthrough)
-    .through(writeToWorkQueue.passthrough)
-    .run
-    .unsafeRunSync
+  //Scheduler[IO](5).flatMap(implicit scheduler =>
+    fruits.covary[IO]
+      .through(writeToDatabase.passthrough)
+      //.through(writeToIndex.passthrough)
+      .through(writeToWorkQueue.passthrough)
+      .through(writeToDatabase.passthrough)
+      .through(writeToIndex.passthrough)
+      .through(writeToWorkQueue.passthrough)
+      .run.unsafeRunSync
+  //).run.unsafeRunSync
 
   // Pass a Stream through multiple Sinks sequentially with pipelining
-  fruits
-    .pipeline(writeToDatabase.passthrough)
-    .pipeline(writeToIndex.passthrough)
-    .pipeline(writeToWorkQueue.passthrough)
-    .run
-    .unsafeRunSync
+  /*
+   *Scheduler[IO](6).flatMap(implicit scheduler =>
+   *  fruits.covary[IO]
+   *    .pipeline(writeToDatabase.passthrough)
+   *    .pipeline(writeToIndex.passthrough)
+   *    .pipeline(writeToWorkQueue.passthrough)
+   *).run.unsafeRunSync
+   */
 
   // Partition a Stream by key, processing each partition concurrently
-  (fruits ++ animals ++ sports ++ languages).joinPartition(4)(_.key)(
-      _.pipeline(writeToDatabase.passthrough)
-       .pipeline(writeToIndex.passthrough)
-       .pipeline(writeToWorkQueue.passthrough)
-    )
-    .run
-    .unsafeRunSync
+  /*
+   *Scheduler[IO](3).flatMap(implicit scheduler =>
+   *  (fruits ++ animals ++ sports ++ languages).covary[IO]
+   *    .joinPartition(4)(_.key)(
+   *      _.pipeline(writeToDatabase.passthrough)
+   *       .pipeline(writeToIndex.passthrough)
+   *       .pipeline(writeToWorkQueue.passthrough)
+   *    )
+   *).run.unsafeRunSync
+   */
 }

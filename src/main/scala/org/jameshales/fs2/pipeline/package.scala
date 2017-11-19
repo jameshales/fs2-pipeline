@@ -1,12 +1,14 @@
 package org.jameshales.fs2
 
+import scala.concurrent.ExecutionContext
+
+import cats.effect.Effect
 import fs2.{ Pipe, Sink, Stream }
-import fs2.util.Async
 
 package object pipeline {
   implicit final class PipelineStreamOps[F[_], A](
     val stream: Stream[F, A]
-  ) extends AnyVal {
+  ) {
     /**
      * Behaves like `self through f`, but pipelines the effects that `f`
      * produces. Successive pipelined calls will overlap the effects between
@@ -48,7 +50,11 @@ package object pipeline {
      * the Stream iterations, and the order of the effects within a Stream
      * iteration.
      */
-    def pipeline[B](f: Pipe[F, A, B])(implicit F: Async[F]): Stream[F, B] =
+    def pipeline[B](f: Pipe[F, A, B])(
+      implicit
+      F:  Effect[F],
+      ec: ExecutionContext
+    ): Stream[F, B] =
       stream through Pipeline.pipeline(f)
 
     /**
@@ -57,7 +63,9 @@ package object pipeline {
      * Stream for Stream elements with the same key.
      */
     def partition[B](n: Int)(partitionBy: A => B)(
-      implicit F: Async[F]
+      implicit
+      F:  Effect[F],
+      ec: ExecutionContext
     ): Stream[F, Stream[F, A]] =
       stream through Pipeline.partition(n)(partitionBy)
 
@@ -68,9 +76,11 @@ package object pipeline {
      * may be re-ordered.
      */
     def joinPartition[B, C](n: Int)(partitionBy: A => B)(p: Pipe[F, A, C])(
-      implicit F: Async[F]
+      implicit
+      F:  Effect[F],
+      ec: ExecutionContext
     ):  Stream[F, C] =
-      fs2.concurrent.join(n)(stream.partition(n)(partitionBy).map(p))
+      stream.partition(n)(partitionBy).map(p).join(n)
   }
 
   implicit final class PipelineSinkOps[F[_], A](
@@ -80,7 +90,11 @@ package object pipeline {
      * Converts a `Sink[F, A]` into a `Pipe[F, A, A]` that yields an `A` after
      * the sink has consumed the `A`.
      */
-    def passthrough(implicit F: Async[F]): Pipe[F, A, A] =
+    def passthrough(
+      implicit
+      F: Effect[F],
+      ec: ExecutionContext
+    ): Pipe[F, A, A] =
       Pipeline.passthrough(sink)
   }
 }
